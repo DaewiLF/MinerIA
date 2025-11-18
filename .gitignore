@@ -1,0 +1,32 @@
+# Entorno virtual
+.venv/
+__pycache__/
+*.pyc
+
+# Archivos de entorno / secretos
+.env
+**/.env
+
+# =========================
+# Backend (Backend_cnn)
+# =========================
+Backend_cnn/__pycache__/
+Backend_cnn/app/__pycache__/
+Backend_cnn/training/__pycache__/
+
+# Datos generados en tiempo de ejecución
+Backend_cnn/uploads/
+Backend_cnn/reports/
+
+# (Opcional, si el modelo pesa mucho)
+Backend_cnn/model_data/*.h5
+
+# =========================
+# Frontend (MinerIA)
+# =========================
+MinerIA/node_modules/
+MinerIA/dist/
+
+# Archivos de editor
+.vscode/
+.idea/

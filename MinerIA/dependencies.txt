@@ -1,0 +1,46 @@
+# ======================
+# MinerIA Frontend – Dependencies
+# ======================
+
+# ========== Dependencies ==========
+react@18.3.1
+react-dom@18.3.1
+react-router-dom@6.22.3
+axios@1.6.7
+
+# ========== Development Dependencies ==========
+typescript@5.4.5
+vite@5.2.11
+@vitejs/plugin-react@4.2.1
+
+# TailwindCSS + PostCSS
+tailwindcss@3.4.1
+postcss@8.4.35
+autoprefixer@10.4.19
+
+# Types
+@types/react@18.2.55
+@types/react-dom@18.2.19
+
+# ESLint
+eslint@9.0.0
+@eslint/js@9.0.0
+eslint-plugin-react@7.33.2
+eslint-plugin-react-hooks@4.6.0
+typescript-eslint@8.7.0
+
+# ======================
+# Comandos útiles
+# ======================
+
+# Instalar todas las dependencias
+npm install
+
+# Levantar el frontend
+npm run dev
+
+# Construir para producción
+npm run build
+
+# Previsualizar build
+npm run preview
