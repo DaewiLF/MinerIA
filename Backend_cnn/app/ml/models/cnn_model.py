@@ -57,12 +57,16 @@ class CopperCNN:
         # PARA MODELO BINARIO (1 neurona sigmoid)
         if prediction.shape[1] == 1:
             probability = float(prediction[0][0])
+            
+            print(f"🧪 Probabilidad sigmoid: {probability}")
+
             if probability > 0.5:
-                predicted_class = 'sin_cobre'
+                predicted_class = 'sin_cobre'  # ACTUALIZADO: Invertido para compatibilidad con nuevo modelo
                 confidence = probability
             else:
                 predicted_class = 'con_cobre' 
                 confidence = 1 - probability
+
         # PARA MODELO MULTICLASE (2 neuronas softmax) - compatibilidad
         else:
             predicted_idx = np.argmax(prediction[0])
@@ -70,7 +74,7 @@ class CopperCNN:
             predicted_class = self.class_names.get(predicted_idx, 'desconocido')
         
         print(f"🎯 Clase: {predicted_class}, Confianza: {confidence:.2%}")
-        return predicted_class, round(confidence * 100, 2)
+        return predicted_class, float(confidence)
 
 # Instancia global del modelo
 copper_model = CopperCNN('model_data/model_copper_fixed.h5')

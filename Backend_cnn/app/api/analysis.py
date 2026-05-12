@@ -25,9 +25,9 @@ from app.ml.models.cnn_model import copper_model
 from app.ml.utils.report_generator import generate_pdf_report
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
-
-UPLOAD_DIR = "uploads"
-REPORTS_DIR = "reports"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 
 
 # --------- SCHEMAS DE RESPUESTA (alineados con el front) ---------

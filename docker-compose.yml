@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  db:
+    image: mariadb:10.11
+    container_name: mineria_db
+    restart: always
+    environment:
+      # MariaDB usa estas variables para crear la DB al iniciar
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: proyecto_integracion
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db_init:/docker-entrypoint-initdb.d
+
+  backend:
+    build: ./backend_cnn
+    container_name: mineria_backend
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend_cnn:/app
+      - /app/__pycache__
+      - ./backend_cnn/uploads:/app/uploads
+      - ./backend_cnn/reports:/app/reports
+    env_file:
+      - ./backend_cnn/.env
+    restart: always
+
+  frontend:
+    build: ./MinerIA
+    container_name: mineria_frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./MinerIA:/app
+      - /app/node_modules
+    restart: always
+
+volumes:
+  db_data:

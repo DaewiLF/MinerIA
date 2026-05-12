@@ -5,6 +5,8 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.mysql_connection import Base, engine
 from app.api import auth, analysis  # nuestros routers
+from app.api.analysis import UPLOAD_DIR, REPORTS_DIR
+
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -25,8 +27,8 @@ app.include_router(auth.router)
 app.include_router(analysis.router)
 
 
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-app.mount("/reports", StaticFiles(directory="reports"), name="reports")
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 
 @app.get("/")
 def root():

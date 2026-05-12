@@ -32,12 +32,7 @@ export async function uploadAnalysis(
   form.append("file", file);
   form.append("metadata", JSON.stringify(metadata));
 
-  const { data } = await apiClient.post("/analysis/upload", form, {
-    headers: {
-      "Content-Type": "multipart/form-data",
-    },
-  });
-
+  const { data } = await apiClient.post("/analysis/upload", form);
   return data;
 }
 
