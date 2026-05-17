@@ -38,10 +38,3 @@ Sigue estos pasos para levantar el entorno de desarrollo backend de MinerIA en t
 ### Prerrequisitos
 * Python 3.9 o superior.
 * PostgreSQL instalado y corriendo localmente.
-
-### Pasos
-
-1. **Clonar el repositorio:**
-   ```bash
-   git clone [https://github.com/tu-usuario/MinerIA.git](https://github.com/tu-usuario/MinerIA.git)
-   cd MinerIA
