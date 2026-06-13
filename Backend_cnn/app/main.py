@@ -8,6 +8,7 @@ from app.db.mysql_connection import Base, engine
 from app.api import auth, analysis  # nuestros routers
 from app.api.analysis import UPLOAD_DIR, REPORTS_DIR
 from app.api.v1 import analyze_video
+from app.api.v1 import panorama
 
 
 """FastAPI entrypoint.
@@ -46,6 +47,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(analyze_video.router)
+app.include_router(panorama.router)
 
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
