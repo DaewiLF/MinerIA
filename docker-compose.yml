@@ -16,19 +16,19 @@ services:
       - ./db_init:/docker-entrypoint-initdb.d
 
   backend:
-    build: ./backend_cnn
+    build: ./Backend_cnn
     container_name: mineria_backend
     depends_on:
       - db
     ports:
       - "8000:8000"
     volumes:
-      - ./backend_cnn:/app
+      - ./Backend_cnn:/app
       - /app/__pycache__
-      - ./backend_cnn/uploads:/app/uploads
-      - ./backend_cnn/reports:/app/reports
+      - ./Backend_cnn/uploads:/app/uploads
+      - ./Backend_cnn/reports:/app/reports
     env_file:
-      - ./backend_cnn/.env
+      - ./Backend_cnn/.env
     restart: always
 
   frontend:
