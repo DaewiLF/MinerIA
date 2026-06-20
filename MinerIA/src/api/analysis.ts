@@ -10,6 +10,12 @@ export interface AnalysisSummary {
   status: string;
 }
 
+export interface AnalysisModelOption {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface AnalysisDetail {
   id: number;
   date: string;
@@ -19,20 +25,27 @@ export interface AnalysisDetail {
   copperGrade: string;
   aiSummary: string;
   recommendations: string[];
-  metadata: Record<string, string | number>;
+  metadata: Record<string, unknown>;
   imageUrl: string;
   status: string;
 }
 
 export async function uploadAnalysis(
   file: File,
-  metadata: Record<string, string | number>
+  metadata: Record<string, string | number>,
+  modelId = "copper"
 ): Promise<AnalysisDetail> {
   const form = new FormData();
   form.append("file", file);
   form.append("metadata", JSON.stringify(metadata));
+  form.append("model_id", modelId);
 
   const { data } = await apiClient.post("/analysis/upload", form);
+  return data;
+}
+
+export async function getAnalysisModels(): Promise<AnalysisModelOption[]> {
+  const { data } = await apiClient.get("/analysis/models");
   return data;
 }
 

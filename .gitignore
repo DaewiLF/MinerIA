@@ -18,8 +18,6 @@ Backend_cnn/training/__pycache__/
 Backend_cnn/uploads/
 Backend_cnn/reports/
 
-# (Opcional, si el modelo pesa mucho)
-Backend_cnn/model_data/*.h5
 
 # =========================
 # Frontend (MinerIA)

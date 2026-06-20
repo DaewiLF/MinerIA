@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 from app.db.mysql_connection import get_db
 from app.db import models as db_models
 from app.core.security import get_current_user
-from app.ml.models.cnn_model import copper_model
+from app.ml.models.model_registry import (
+    DEFAULT_MODEL_ID,
+    get_analysis_model,
+    list_analysis_models,
+)
 from app.ml.utils.report_generator import generate_pdf_report
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
@@ -54,13 +58,25 @@ class AnalysisDetailResponse(BaseModel):
     metadata: Dict[str, Any]
     imageUrl: str
     status: str
+
+
+class ModelOptionResponse(BaseModel):
+    id: str
+    name: str
+    description: str
 # ---------------------------------------------------------------
+
+
+@router.get("/models", response_model=List[ModelOptionResponse])
+def get_models():
+    return [ModelOptionResponse(**model) for model in list_analysis_models()]
 
 
 @router.post("/upload", response_model=AnalysisDetailResponse)
 async def upload_analysis(
     file: UploadFile = File(...),
     metadata: str = Form(...),
+    model_id: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: db_models.Usuario = Depends(get_current_user),
 ):
@@ -75,6 +91,12 @@ async def upload_analysis(
             raise ValueError
     except Exception:
         raise HTTPException(status_code=400, detail="Metadata inválida")
+
+    selected_model_id = str(model_id or meta_dict.get("modelId") or DEFAULT_MODEL_ID)
+    try:
+        analysis_model = get_analysis_model(selected_model_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # 2) Validar tipo de archivo
     if file.content_type not in ("image/jpeg", "image/png"):
@@ -91,12 +113,14 @@ async def upload_analysis(
         shutil.copyfileobj(file.file, buffer)
 
     # 4) Ejecutar IA
-    predicted_class, confidence = copper_model.predict(disk_path)
-    if predicted_class is None:
+    prediction = analysis_model.analyze(disk_path)
+    if prediction is None:
         raise HTTPException(
             status_code=500,
             detail="Error al procesar la imagen con el modelo",
         )
+    predicted_class = prediction.result
+    confidence = prediction.confidence
 
     # 5) Guardar imagen y clasificación en BD
     tamano = os.path.getsize(disk_path)
@@ -117,7 +141,7 @@ async def upload_analysis(
         resultado=predicted_class,
         confianza=Decimal(str(confidence)),
         es_correcto=None,
-        modelo_usado="CNN",
+        modelo_usado=prediction.model_name[:50],
     )
     db.add(clasificacion)
     db.commit()
@@ -134,33 +158,68 @@ async def upload_analysis(
     conf_pct = round(confidence * 100, 2)
     hay_cobre = predicted_class == "con_cobre"
 
-    if hay_cobre:
-        copper_grade_text = f"Presencia de cobre detectada ({conf_pct} % de confianza)"
-        ai_summary = (
-            f"Se detecta PRESENCIA de vetas de cobre en la imagen con una "
-            f"confianza de {conf_pct}%. Zona: {zone}. Nivel de riesgo declarado: {risk_level}. "
-            f"Responsable del registro: {responsable or 'N/D'}. "
-            f"Personal involucrado: {personal or 'N/D'}."
-        )
-        recommendations = [
-            "Derivar el registro al área de geología para evaluación detallada.",
-            "Actualizar el modelo geológico de la zona con esta evidencia.",
-            "Priorizar esta zona en el plan de explotación según los lineamientos de la faena.",
-        ]
-        status = "con_cobre"
+    if prediction.model_id == "minerals":
+        mineral = str(prediction.metadata.get("mineral_predicho") or prediction.raw_label)
+        copper_probability = float(prediction.metadata.get("probabilidad_cobre") or 0)
+        copper_pct = round(copper_probability * 100, 2)
+
+        if hay_cobre:
+            copper_grade_text = f"Mineral detectado: copper ({conf_pct} % de confianza)"
+            ai_summary = (
+                f"El modelo multiclase clasifico la muestra como copper con una "
+                f"confianza de {conf_pct}%. Zona: {zone}. Nivel de riesgo declarado: {risk_level}. "
+                f"Responsable del registro: {responsable or 'N/D'}. "
+                f"Personal involucrado: {personal or 'N/D'}."
+            )
+            recommendations = [
+                "Derivar el registro al area de geologia para validacion del mineral.",
+                "Usar la clase predicha para la revision Grad-CAM del modelo multiclase.",
+                "Contrastar el resultado con el modelo binario de cobre si se requiere confirmacion.",
+            ]
+            status = "con_cobre"
+        else:
+            copper_grade_text = f"Mineral probable: {mineral} ({conf_pct} % de confianza)"
+            ai_summary = (
+                f"El modelo multiclase clasifico la muestra como {mineral} con una "
+                f"confianza de {conf_pct}%. Probabilidad asignada a copper: {copper_pct}%. "
+                f"Zona: {zone}. Nivel de riesgo declarado: {risk_level}. "
+                f"Responsable del registro: {responsable or 'N/D'}. "
+                f"Personal involucrado: {personal or 'N/D'}."
+            )
+            recommendations = [
+                "Revisar la clase mineral predicha antes de tomar decisiones operativas.",
+                "Usar Grad-CAM para inspeccionar que zonas de la imagen explican la prediccion.",
+                "Ejecutar el modelo binario de cobre si el objetivo es solo confirmar presencia de cobre.",
+            ]
+            status = "sin_cobre"
     else:
-        copper_grade_text = f"Sin evidencia significativa de cobre ({conf_pct} % de confianza)"
-        ai_summary = (
-            f"No se detecta presencia significativa de vetas de cobre en la imagen "
-            f"(confianza {conf_pct}%). Zona: {zone}. Nivel de riesgo declarado: {risk_level}. "
-            f"Responsable del registro: {responsable or 'N/D'}. "
-            f"Personal involucrado: {personal or 'N/D'}."
-        )
-        recommendations = [
-            "Archivar el registro como caso sin presencia de cobre.",
-            "Utilizar esta imagen como ejemplo negativo para seguir entrenando el modelo.",
-        ]
-        status = "sin_cobre"
+        if hay_cobre:
+            copper_grade_text = f"Presencia de cobre detectada ({conf_pct} % de confianza)"
+            ai_summary = (
+                f"Se detecta PRESENCIA de vetas de cobre en la imagen con una "
+                f"confianza de {conf_pct}%. Zona: {zone}. Nivel de riesgo declarado: {risk_level}. "
+                f"Responsable del registro: {responsable or 'N/D'}. "
+                f"Personal involucrado: {personal or 'N/D'}."
+            )
+            recommendations = [
+                "Derivar el registro al area de geologia para evaluacion detallada.",
+                "Actualizar el modelo geologico de la zona con esta evidencia.",
+                "Priorizar esta zona en el plan de explotacion segun los lineamientos de la faena.",
+            ]
+            status = "con_cobre"
+        else:
+            copper_grade_text = f"Sin evidencia significativa de cobre ({conf_pct} % de confianza)"
+            ai_summary = (
+                f"No se detecta presencia significativa de vetas de cobre en la imagen "
+                f"(confianza {conf_pct}%). Zona: {zone}. Nivel de riesgo declarado: {risk_level}. "
+                f"Responsable del registro: {responsable or 'N/D'}. "
+                f"Personal involucrado: {personal or 'N/D'}."
+            )
+            recommendations = [
+                "Archivar el registro como caso sin presencia de cobre.",
+                "Utilizar esta imagen como ejemplo negativo para seguir entrenando el modelo.",
+            ]
+            status = "sin_cobre"
 
     meta_out: Dict[str, Any] = dict(meta_dict)
     meta_out.update(
@@ -168,10 +227,15 @@ async def upload_analysis(
             "coordinates": gps,
             "responsible": responsable,
             "personnel": personal,
-            "modelo": "CopperCNN",
+            "modelo": prediction.model_name,
+            "modelo_id": prediction.model_id,
             "confianza_porcentaje": conf_pct,
+            "resultado_modelo": prediction.result,
+            "etiqueta_predicha": prediction.raw_label,
+            "probabilidades": prediction.probabilities,
         }
     )
+    meta_out.update(prediction.metadata)
 
     detail_payload: Dict[str, Any] = {
         "id": clasificacion.id_clasificacion,

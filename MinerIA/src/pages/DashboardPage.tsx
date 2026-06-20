@@ -1,12 +1,28 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Sidebar } from "../components/layout/Sidebar";
 import { TopBar } from "../components/layout/TopBar";
-import type { AnalysisDetail } from "../api/analysis";
-import { uploadAnalysis } from "../api/analysis";
+import type { AnalysisDetail, AnalysisModelOption } from "../api/analysis";
+import { getAnalysisModels, uploadAnalysis } from "../api/analysis";
+
+const fallbackModelOptions: AnalysisModelOption[] = [
+  {
+    id: "copper",
+    name: "Modelo cobre",
+    description: "Deteccion binaria de cobre.",
+  },
+  {
+    id: "minerals",
+    name: "Modelo minerales",
+    description: "Clasificacion multiclase de minerales.",
+  },
+];
 
 export function DashboardPage() {
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [modelId, setModelId] = useState("copper");
+  const [modelOptions, setModelOptions] =
+    useState<AnalysisModelOption[]>(fallbackModelOptions);
 
   const [metadata, setMetadata] = useState({
     category: "",
@@ -21,6 +37,26 @@ export function DashboardPage() {
   const [result, setResult] = useState<AnalysisDetail | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    getAnalysisModels()
+      .then((models) => {
+        if (active && models.length > 0) {
+          setModelOptions(models);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setModelOptions(fallbackModelOptions);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleMetaChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -50,7 +86,7 @@ export function DashboardPage() {
     setResult(null);
 
     try {
-      const r = await uploadAnalysis(selectedFile, metadata);
+      const r = await uploadAnalysis(selectedFile, metadata, modelId);
       setResult(r);
     } finally {
       setLoading(false);
@@ -110,6 +146,21 @@ export function DashboardPage() {
                 </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-slate-600">Modelo IA</label>
+                    <select
+                      value={modelId}
+                      onChange={(e) => setModelId(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-2 py-1.5 bg-white"
+                    >
+                      {modelOptions.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="space-y-1">
                     <label className="text-slate-600">Categoría</label>
                     <select
