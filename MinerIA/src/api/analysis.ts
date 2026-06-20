@@ -30,6 +30,21 @@ export interface AnalysisDetail {
   status: string;
 }
 
+export interface VideoFinding {
+  segundo_del_video: number;
+  timestamp: string;
+  confianza: number;
+  frame_asociado: string;
+}
+
+export interface VideoAnalysisResponse {
+  video_id: string;
+  duracion_total_segundos: number;
+  total_hallazgos: number;
+  detalle_hallazgos: VideoFinding[];
+  ruta_video_original: string;
+}
+
 export async function uploadAnalysis(
   file: File,
   metadata: Record<string, string | number>,
@@ -49,6 +64,13 @@ export async function getAnalysisModels(): Promise<AnalysisModelOption[]> {
   return data;
 }
 
+export async function analyzeVideo(file: File): Promise<VideoAnalysisResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await apiClient.post("/v1/analyze-video", form);
+  return data;
+}
+
 export async function getAnalysisHistory(): Promise<AnalysisSummary[]> {
   const { data } = await apiClient.get("/analysis/history");
   return data;
@@ -60,3 +82,4 @@ export async function getAnalysisById(
   const { data } = await apiClient.get(`/analysis/${id}`);
   return data;
 }
+
