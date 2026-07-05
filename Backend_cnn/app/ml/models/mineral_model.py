@@ -6,6 +6,7 @@ import tensorflow as tf
 from PIL import Image
 
 from app.ml.models.base import ModelPrediction
+from app.ml.utils.gradcam import cleanup_tf_memory, generate_gradcam
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[3]
@@ -70,14 +71,17 @@ class MineralClassifier:
             return None
 
         labels = self.load_labels()
-        prediction = self.model.predict(processed_image, verbose=0)[0]
-        predicted_idx = int(np.argmax(prediction))
+        prediction = self.model(processed_image, training=False)
+        pred_np = prediction.numpy()[0]
+        cleanup_tf_memory(prediction)
+
+        predicted_idx = int(np.argmax(pred_np))
         mineral_label = labels[predicted_idx]
-        confidence = float(prediction[predicted_idx])
-        copper_probability = float(prediction[labels.index("copper")]) if "copper" in labels else 0.0
+        confidence = float(pred_np[predicted_idx])
+        copper_probability = float(pred_np[labels.index("copper")]) if "copper" in labels else 0.0
         result = "con_cobre" if mineral_label == "copper" else "sin_cobre"
         probabilities = {
-            label: float(prediction[index])
+            label: float(pred_np[index])
             for index, label in enumerate(labels)
         }
         top_predictions = sorted(
@@ -86,6 +90,7 @@ class MineralClassifier:
             reverse=True,
         )[:5]
 
+        cleanup_tf_memory(processed_image, pred_np)
         return ModelPrediction(
             model_id=self.model_id,
             model_name=self.model_name,
@@ -103,6 +108,28 @@ class MineralClassifier:
                 ],
             },
         )
+
+    def generate_heatmap(self, image_path: str, prediction: ModelPrediction) -> str | None:
+        if not self.model and not self.load_model():
+            return None
+        processed = self.preprocess_image(image_path)
+        if processed is None:
+            return None
+        try:
+            url, heatmap = generate_gradcam(
+                model=self.model,
+                image_path=image_path,
+                image_batch=processed,
+                model_id=self.model_id,
+                prediction_result=prediction.result,
+                raw_label=prediction.raw_label,
+                labels=self.load_labels(),
+            )
+            cleanup_tf_memory(processed, heatmap)
+            return url
+        except Exception as exc:
+            print(f"Error generando Grad-CAM: {exc}")
+            return None
 
     def predict(self, image_path: str) -> tuple[str | None, float | None]:
         prediction = self.analyze(image_path)

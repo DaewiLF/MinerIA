@@ -11,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     func,
 )
+from sqlalchemy.dialects.mysql import INTEGER as MySQLInteger
 from sqlalchemy.orm import relationship
 
 from app.db.mysql_connection import Base
@@ -29,6 +30,15 @@ class Usuario(Base):
     # Relaciones
     imagenes = relationship("Imagen", back_populates="usuario", cascade="all, delete-orphan")
     revisiones = relationship("Revision", back_populates="usuario", cascade="all, delete-orphan")
+    cola_analisis = relationship(
+        "ColaAnalisis", back_populates="usuario", cascade="all, delete-orphan"
+    )
+    panoramas = relationship(
+        "ImagenPanorama", back_populates="usuario", cascade="all, delete-orphan"
+    )
+    videos = relationship(
+        "AnalisisVideo", back_populates="usuario", cascade="all, delete-orphan"
+    )
 
 
 class Imagen(Base):
@@ -189,3 +199,93 @@ class Prediccion(Base):
     fecha_almacenamiento = Column(DateTime(timezone=True), server_default=func.now())
 
     clasificacion = relationship("Clasificacion", back_populates="predicciones")
+
+
+class ColaAnalisis(Base):
+    __tablename__ = "cola_analisis"
+
+    id_cola = Column(MySQLInteger(unsigned=True), primary_key=True, autoincrement=True)
+    id_usuario = Column(
+        MySQLInteger(unsigned=True),
+        ForeignKey("usuarios.id_usuario", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    ruta_archivo = Column(String(255), nullable=False)
+    tamano = Column(Integer, nullable=False)
+    formato = Column(String(50), nullable=False)
+    metadata_json = Column(Text, nullable=False)
+    modelo_id = Column(String(50), nullable=False, default="copper")
+    estado = Column(
+        Enum("pendiente", "procesando", "completado", "error", name="estado_cola"),
+        nullable=False,
+        default="pendiente",
+    )
+    error = Column(Text, nullable=True)
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
+    fecha_procesamiento = Column(DateTime(timezone=True), nullable=True)
+
+    usuario = relationship("Usuario", back_populates="cola_analisis")
+
+
+class ImagenPanorama(Base):
+    __tablename__ = "imagenes_panorama"
+
+    id_panorama = Column(MySQLInteger(unsigned=True), primary_key=True, autoincrement=True)
+    id_usuario = Column(
+        MySQLInteger(unsigned=True),
+        ForeignKey("usuarios.id_usuario", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    ruta_archivo = Column(String(255), nullable=False)
+    ancho_original = Column(Integer, nullable=False)
+    alto_original = Column(Integer, nullable=False)
+    patch_size = Column(Integer, nullable=False, default=224)
+    overlap = Column(Integer, nullable=False, default=32)
+    total_patches = Column(Integer, nullable=False, default=0)
+    fecha_carga = Column(DateTime(timezone=True), server_default=func.now())
+
+    usuario = relationship("Usuario", back_populates="panoramas")
+    parches = relationship(
+        "ParchePanorama", back_populates="panorama", cascade="all, delete-orphan"
+    )
+
+
+class ParchePanorama(Base):
+    __tablename__ = "parches_panorama"
+
+    id_parche = Column(MySQLInteger(unsigned=True), primary_key=True, autoincrement=True)
+    id_panorama = Column(
+        MySQLInteger(unsigned=True),
+        ForeignKey("imagenes_panorama.id_panorama", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    ruta_parche = Column(String(255), nullable=False)
+    x_min = Column(Integer, nullable=False)
+    y_min = Column(Integer, nullable=False)
+    x_max = Column(Integer, nullable=False)
+    y_max = Column(Integer, nullable=False)
+    fila = Column(Integer, nullable=False, default=0)
+    columna = Column(Integer, nullable=False, default=0)
+
+    panorama = relationship("ImagenPanorama", back_populates="parches")
+
+
+class AnalisisVideo(Base):
+    __tablename__ = "analisis_video"
+
+    id_video = Column(MySQLInteger(unsigned=True), primary_key=True, autoincrement=True)
+    id_usuario = Column(
+        MySQLInteger(unsigned=True),
+        ForeignKey("usuarios.id_usuario", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    nombre_archivo = Column(String(255), nullable=False)
+    ruta_video = Column(String(255), nullable=False)
+    duracion_segundos = Column(Integer, nullable=False, default=0)
+    total_frames_analizados = Column(Integer, nullable=False, default=0)
+    total_hallazgos = Column(Integer, nullable=False, default=0)
+    reporte_json = Column(Text, nullable=False)
+    ruta_pdf = Column(String(255), nullable=True)
+    fecha_analisis = Column(DateTime(timezone=True), server_default=func.now())
+
+    usuario = relationship("Usuario", back_populates="videos")

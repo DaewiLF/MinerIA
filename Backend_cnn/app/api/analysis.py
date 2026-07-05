@@ -13,6 +13,7 @@ from fastapi import (
     Form,
     Depends,
     HTTPException,
+    BackgroundTasks,
 )
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -27,6 +28,7 @@ from app.ml.models.model_registry import (
     list_analysis_models,
 )
 from app.ml.utils.report_generator import generate_pdf_report
+from app.ml.inference_queue import run_queue_background
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -57,6 +59,7 @@ class AnalysisDetailResponse(BaseModel):
     recommendations: List[str]
     metadata: Dict[str, Any]
     imageUrl: str
+    gradcamUrl: str | None = None
     status: str
 
 
@@ -64,7 +67,176 @@ class ModelOptionResponse(BaseModel):
     id: str
     name: str
     description: str
+
+
+class QueueItemResponse(BaseModel):
+    id: int
+    estado: str
+    error: str | None
+    fecha_creacion: str
+    fecha_procesamiento: str | None
+
+
+class BatchUploadResponse(BaseModel):
+    total: int
+    items: List[QueueItemResponse]
+
+
+class DashboardStatsResponse(BaseModel):
+    analisis_hoy: int
+    analisis_semana: int
+    confianza_promedio: float
+    alertas_criticas: int
+    en_cola: int
+    modelos_activos: int
+    actividad_semanal: list[dict]
+    distribucion_mineral: list[dict]
+    ultimos_analisis: list[dict]
 # ---------------------------------------------------------------
+
+
+@router.get("/stats", response_model=DashboardStatsResponse)
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: db_models.Usuario = Depends(get_current_user),
+):
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_ago = today_start - timedelta(days=7)
+    user_id = current_user.id_usuario
+
+    # Base: clasificaciones del usuario vía imágenes
+    base = (
+        db.query(db_models.Clasificacion)
+        .join(db_models.Imagen, db_models.Clasificacion.id_imagen == db_models.Imagen.id_imagen)
+        .filter(db_models.Imagen.id_usuario == user_id)
+    )
+
+    total_hoy = base.filter(db_models.Clasificacion.fecha_clasificacion >= today_start).count()
+
+    total_semana = base.filter(db_models.Clasificacion.fecha_clasificacion >= week_ago).count()
+
+    conf_prom = (
+        base.with_entities(func.avg(db_models.Clasificacion.confianza))
+        .filter(db_models.Clasificacion.confianza.isnot(None))
+        .scalar()
+    )
+    confianza_promedio = round(float(conf_prom) * 100, 2) if conf_prom else 0.0
+
+    # Distribución por resultado (con_cobre / sin_cobre / mineral)
+    mineral_dist = (
+        base.with_entities(
+            db_models.Clasificacion.resultado, func.count().label("total")
+        )
+        .group_by(db_models.Clasificacion.resultado)
+        .all()
+    )
+
+    # Actividad diaria últimos 7 días
+    daily = (
+        base.with_entities(
+            func.date(db_models.Clasificacion.fecha_clasificacion).label("fecha"),
+            func.count().label("total"),
+        )
+        .filter(db_models.Clasificacion.fecha_clasificacion >= week_ago)
+        .group_by(func.date(db_models.Clasificacion.fecha_clasificacion))
+        .order_by(func.date(db_models.Clasificacion.fecha_clasificacion))
+        .all()
+    )
+
+    # Cola pendientes
+    cola_pendientes = (
+        db.query(func.count())
+        .filter(
+            db_models.ColaAnalisis.id_usuario == user_id,
+            db_models.ColaAnalisis.estado == "pendiente",
+        )
+        .scalar()
+    ) or 0
+
+    # Alertas críticas (riskLevel = "Alto" en el JSON del reporte)
+    alertas = (
+        db.query(db_models.Reporte)
+        .join(
+            db_models.Clasificacion,
+            db_models.Reporte.id_clasificacion == db_models.Clasificacion.id_clasificacion,
+        )
+        .join(db_models.Imagen)
+        .filter(db_models.Imagen.id_usuario == user_id)
+        .all()
+    )
+    alertas_criticas = 0
+    for r in alertas:
+        try:
+            c = json.loads(r.contenido)
+            if c.get("riskLevel") == "Alto":
+                alertas_criticas += 1
+        except Exception:
+            pass
+
+    # Últimos 5 análisis
+    ultimos_rows = (
+        db.query(db_models.Clasificacion, db_models.Imagen, db_models.Reporte)
+        .join(db_models.Imagen)
+        .outerjoin(db_models.Reporte)
+        .filter(db_models.Imagen.id_usuario == user_id)
+        .order_by(db_models.Clasificacion.fecha_clasificacion.desc())
+        .limit(5)
+        .all()
+    )
+    ultimos_analisis = []
+    for clasif, imagen, reporte in ultimos_rows:
+        p = {}
+        if reporte and reporte.contenido:
+            try:
+                p = json.loads(reporte.contenido)
+            except Exception:
+                p = {}
+        ultimos_analisis.append(
+            {
+                "id": clasif.id_clasificacion,
+                "zone": p.get("zone", "Zona no especificada"),
+                "copperGrade": p.get("copperGrade", clasif.resultado),
+                "confidence": round(float(clasif.confianza) * 100, 1) if clasif.confianza else 0,
+                "riskLevel": p.get("riskLevel", "No especificado"),
+                "date": p.get(
+                    "date",
+                    clasif.fecha_clasificacion.isoformat()
+                    if clasif.fecha_clasificacion
+                    else "",
+                ),
+            }
+        )
+
+    # Modelos activos
+    modelos = list_analysis_models()
+    modelos_activos = len(modelos)
+
+    # Rellenar días sin actividad en la semana
+    actividad_semanal = []
+    for i in range(7):
+        day = (today_start - timedelta(days=6 - i)).date()
+        match = [d for d in daily if d.fecha == day]
+        actividad_semanal.append(
+            {"fecha": day.isoformat(), "total": match[0].total if match else 0}
+        )
+
+    return DashboardStatsResponse(
+        analisis_hoy=total_hoy,
+        analisis_semana=total_semana,
+        confianza_promedio=confianza_promedio,
+        alertas_criticas=alertas_criticas,
+        en_cola=cola_pendientes,
+        modelos_activos=modelos_activos,
+        actividad_semanal=actividad_semanal,
+        distribucion_mineral=[
+            {"nombre": r.resultado, "total": r.total} for r in mineral_dist
+        ],
+        ultimos_analisis=ultimos_analisis,
+    )
 
 
 @router.get("/models", response_model=List[ModelOptionResponse])
@@ -121,6 +293,8 @@ async def upload_analysis(
         )
     predicted_class = prediction.result
     confidence = prediction.confidence
+
+    gradcam_url = analysis_model.generate_heatmap(disk_path, prediction)
 
     # 5) Guardar imagen y clasificación en BD
     tamano = os.path.getsize(disk_path)
@@ -250,7 +424,11 @@ async def upload_analysis(
         "recommendations": recommendations,
         "metadata": meta_out,
         "imageUrl": web_url,
+        "gradcamUrl": gradcam_url,
         "status": status,
+        "coordinates": gps,
+        "responsible": responsable,
+        "personnel": personal,
     }
 
     # 7) Generar PDF + guardar en reportes
@@ -272,6 +450,101 @@ async def upload_analysis(
     db.commit()
 
     return AnalysisDetailResponse(**detail_payload)
+
+
+@router.post("/upload-batch", response_model=BatchUploadResponse)
+async def upload_batch(
+    files: List[UploadFile] = File(...),
+    metadata: str = Form(...),
+    model_id: str | None = Form(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: Session = Depends(get_db),
+    current_user: db_models.Usuario = Depends(get_current_user),
+):
+    try:
+        meta_dict = json.loads(metadata)
+        if not isinstance(meta_dict, dict):
+            raise ValueError
+    except Exception:
+        raise HTTPException(status_code=400, detail="Metadata inválida")
+
+    selected_model_id = str(model_id or meta_dict.get("modelId") or DEFAULT_MODEL_ID)
+
+    if len(files) == 0:
+        raise HTTPException(status_code=400, detail="No se enviaron archivos")
+
+    queue_items: List[QueueItemResponse] = []
+    metadata_str = json.dumps(meta_dict, ensure_ascii=False)
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    for file in files:
+        if file.content_type not in ("image/jpeg", "image/png"):
+            continue
+
+        ext = os.path.splitext(file.filename)[1].lower() or ".jpg"
+        unique_name = f"{uuid4().hex}{ext}"
+        disk_path = os.path.join(UPLOAD_DIR, unique_name)
+
+        with open(disk_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        tamano = os.path.getsize(disk_path)
+
+        cola = db_models.ColaAnalisis(
+            id_usuario=current_user.id_usuario,
+            ruta_archivo=disk_path,
+            tamano=tamano,
+            formato=file.content_type,
+            metadata_json=metadata_str,
+            modelo_id=selected_model_id,
+            estado="pendiente",
+        )
+        db.add(cola)
+        db.commit()
+        db.refresh(cola)
+
+        queue_items.append(
+            QueueItemResponse(
+                id=cola.id_cola,
+                estado=cola.estado,
+                error=None,
+                fecha_creacion=cola.fecha_creacion.isoformat()
+                if cola.fecha_creacion else "",
+                fecha_procesamiento=None,
+            )
+        )
+
+    background_tasks.add_task(run_queue_background)
+
+    return BatchUploadResponse(total=len(queue_items), items=queue_items)
+
+
+@router.get("/queue", response_model=List[QueueItemResponse])
+def get_user_queue(
+    db: Session = Depends(get_db),
+    current_user: db_models.Usuario = Depends(get_current_user),
+):
+    items = (
+        db.query(db_models.ColaAnalisis)
+        .filter(db_models.ColaAnalisis.id_usuario == current_user.id_usuario)
+        .order_by(db_models.ColaAnalisis.fecha_creacion.desc())
+        .limit(100)
+        .all()
+    )
+
+    return [
+        QueueItemResponse(
+            id=item.id_cola,
+            estado=item.estado,
+            error=item.error,
+            fecha_creacion=item.fecha_creacion.isoformat()
+            if item.fecha_creacion else "",
+            fecha_procesamiento=item.fecha_procesamiento.isoformat()
+            if item.fecha_procesamiento else None,
+        )
+        for item in items
+    ]
 
 
 @router.get("/history", response_model=List[AnalysisSummaryResponse])
